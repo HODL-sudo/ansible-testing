@@ -1,0 +1,28 @@
+- name: Get entire running configuration via NETCONF
+  hosts: localhost
+  connection: local
+  gather_facts: no
+
+  vars:
+    router_ip: "10.1.103.185"
+    router_user: "root"
+    router_pass: "rootroot"
+    netconf_port: 830
+
+  tasks:
+    - name: Run netconf-console2 to get the full running config
+      ansible.builtin.command: >
+        netconf-console2 --host {{ router_ip }} --port {{ netconf_port }}
+        -u {{ router_user }} -p {{ router_pass }} --rpc -
+      args:
+        stdin: |
+          <get-config>
+            <source>
+              <running/>
+            </source>
+          </get-config>
+      register: full_config
+
+    - name: Display the full configuration
+      debug:
+        var: full_config.stdout

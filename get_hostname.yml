@@ -1,0 +1,16 @@
+---
+- name: Get hostname from Cisco IOS-XR router
+  hosts: iosxr
+  gather_facts: no
+  connection: network_cli
+
+  tasks:
+    - name: Run 'show running-config | include hostname'
+      cisco.iosxr.iosxr_command:
+        commands:
+          - show running-config | include hostname
+      register: hostname_output
+
+    - name: Display hostname
+      debug:
+        var: hostname_output.stdout_lines

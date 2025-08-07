@@ -1,0 +1,33 @@
+- name: Get hostname using the correct NETCONF filter
+  hosts: localhost
+  connection: local
+  gather_facts: no
+
+  vars:
+    router_ip: "10.1.103.185"
+    router_user: "root"
+    router_pass: "rootroot"
+    netconf_port: 830
+
+  tasks:
+    - name: Run netconf-console2 with the correct filter via stdin
+      ansible.builtin.command: >
+        netconf-console2 --host {{ router_ip }} --port {{ netconf_port }}
+        -u {{ router_user }} -p {{ router_pass }} --rpc -
+      args:
+        stdin: |
+          <get-config>
+            <source>
+              <running/>
+            </source>
+            <filter type="subtree">
+              <host-names xmlns="http://cisco.com/ns/yang/Cisco-IOS-XR-shellutil-cfg">
+                <host-name/>
+              </host-names>
+            </filter>
+          </get-config>
+      register: netconf_output
+
+    - name: Display the hostname XML
+      debug:
+        var: netconf_output.stdout

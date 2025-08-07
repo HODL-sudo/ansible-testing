@@ -1,0 +1,7 @@
+- name: Ping Cisco router from local Ubuntu
+  hosts: local
+  gather_facts: no
+
+  tasks:
+    - name: Ping router
+      ansible.builtin.command: ping -c 4 10.1.103.185

@@ -1,0 +1,16 @@
+---
+- name: Get running config from Cisco IOS-XR router
+  hosts: iosxr
+  gather_facts: no
+  connection: network_cli
+
+  tasks:
+    - name: Run "show running-config"
+      cisco.iosxr.iosxr_command:
+        commands:
+          - show running-config
+      register: output
+
+    - name: Display running-config
+      ansible.builtin.debug:
+        var: output.stdout_lines
