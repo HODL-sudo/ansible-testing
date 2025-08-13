@@ -10,7 +10,19 @@
         commands:
           - show running-config
       register: output
+      # We add 'ignore_unreachable: true' so the playbook continues to the pause task
+      # even if the device is unreachable (times out).
+      ignore_unreachable: true
 
     - name: Display running-config
       ansible.builtin.debug:
         var: output.stdout_lines
+      # This task will only run if the previous one succeeded
+      when: output is not unreachable
+
+    - name: Pause for debugging
+      ansible.builtin.pause:
+        minutes: 30
+        prompt: "Playbook is paused. The pod is now running. Use 'kubectl exec' to get a shell into the automation job pod. Press Enter in the AWX UI to continue and terminate the pod."
+      # We use 'always' to ensure this task runs regardless of whether the previous tasks failed
+      when: always
