@@ -5,20 +5,12 @@
   connection: network_cli
 
   tasks:
-    - name: Main task block
-      block:
-        - name: Run "show running-config"
-          cisco.iosxr.iosxr_command:
-            commands:
-              - show running-config
-          register: output
+    - name: Run "show running-config"
+      cisco.iosxr.iosxr_command:
+        commands:
+          - show running-config
+      register: output
 
-        - name: Display running-config
-          ansible.builtin.debug:
-            var: output.stdout_lines
-
-      rescue:
-        - name: A failure occurred! Pausing for debugging.
-          ansible.builtin.pause:
-            minutes: 30
-            prompt: "A task failed. Playbook is now paused in the 'rescue' block. Use 'kubectl exec' to get a shell into the automation job pod. Press Enter in the AWX UI to end."
+    - name: Display running-config
+      ansible.builtin.debug:
+        var: output.stdout_lines
