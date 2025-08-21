@@ -1,0 +1,19 @@
+---
+- name: Ping router from remote host
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+    router_ip: 10.1.1.184  # Replace with your router IP
+
+  tasks:
+    - name: Ping the router
+      ansible.builtin.shell: |
+        ping -c 4 {{ router_ip }}
+      register: ping_result
+      ignore_errors: true
+
+    - name: Show ping output
+      ansible.builtin.debug:
+        var: ping_result.stdout_lines
