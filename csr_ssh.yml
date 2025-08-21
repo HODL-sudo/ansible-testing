@@ -1,0 +1,17 @@
+- name: TCP connectivity check from AWX to router
+  hosts: localhost
+  connection: local
+  gather_facts: no
+
+  vars:
+    router_ip: 10.1.1.184
+
+  tasks:
+    - name: Try connecting to port 22 on router
+      shell: nc -zv {{ router_ip }} 22
+      register: result
+      ignore_errors: true
+
+    - name: Show result
+      debug:
+        var: result.stdout_lines
