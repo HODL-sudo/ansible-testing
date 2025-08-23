@@ -6,3 +6,5 @@ localhost ansible_connection=local
 router1 ansible_host=10.1.103.185 ansible_user=root ansible_password=rootroot ansible_network_os=iosxr ansible_connection=network_cli
 [netconf_iosxr]
 router1 ansible_host=10.1.103.185 ansible_user=root ansible_password=rootroot ansible_network_os=iosxr ansible_connection=netconf ansible_netconf_port=830
+[csr]
+router2 ansible_host=10.1.1.184
