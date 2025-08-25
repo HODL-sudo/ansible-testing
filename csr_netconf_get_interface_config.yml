@@ -1,0 +1,17 @@
+---
+- name: Get interface facts using NETCONF
+  hosts: csr
+  connection: netconf  # Using netconf connection ensures facts are gathered via NETCONF
+  gather_facts: no
+
+  vars:
+    ansible_network_os: cisco.ios.ios
+
+  tasks:
+    - name: Gather facts for all interfaces
+      cisco.ios.ios_facts:
+        gather_subset: interfaces
+
+    - name: Print facts for GigabitEthernet1
+      debug:
+        var: ansible_facts.net_interfaces['GigabitEthernet1']
