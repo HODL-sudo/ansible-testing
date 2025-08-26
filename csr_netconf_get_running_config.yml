@@ -1,27 +1,24 @@
 ---
-- name: Get Running Configuration via NETCONF
+- name: Get Running Configuration with a Raw NETCONF RPC
   hosts: csr
   connection: netconf
   gather_facts: no
 
-  vars:
-    # This ensures Ansible uses the Cisco IOS plugin for NETCONF communication.
-    ansible_network_os: cisco.ios.ios
-
   tasks:
-    - name: Retrieve the full running configuration
-      cisco.ios.ios_netconf:
-        # The 'content' parameter sends a raw XML RPC to the device.
-        # This is the standard NETCONF RPC to get the running config.
+    - name: Execute a <get-config> RPC for the native model
+      ansible.netcommon.netconf_rpc:
+        rpc: get-config
         content: |
-          <get-config>
-            <source>
-              <running/>
-            </source>
-          </get-config>
+          <source>
+            <running/>
+          </source>
+          <filter>
+            <native xmlns="http://cisco.com/ns/yang/Cisco-IOS-XE-native"/>
+          </filter>
       register: running_config_output
 
-    - name: Print the running configuration (XML format)
+    - name: Print the full RPC reply
       debug:
-        # The raw XML output is stored in the 'stdout' key of the registered variable.
+        # --- THIS IS THE FINAL FIX ---
+        # The data is in the 'stdout' key.
         var: running_config_output.stdout

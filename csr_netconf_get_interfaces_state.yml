@@ -1,0 +1,16 @@
+---
+- name: Get Operational Interface State via NETCONF
+  hosts: csr
+  connection: netconf
+  gather_facts: no
+
+  tasks:
+    - name: Retrieve state data for all interfaces
+      ansible.netcommon.netconf_get:
+        filter: |
+          <interfaces-state xmlns="urn:ietf:params:xml:ns:yang:ietf-interfaces"/>
+      register: interfaces_state_output
+
+    - name: Print the interface state (XML format)
+      debug:
+        var: interfaces_state_output.stdout

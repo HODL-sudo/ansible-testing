@@ -1,0 +1,20 @@
+---
+- name: Set IOS XE Demo Config
+  gather_facts: false
+  hosts: csr
+  tasks:
+   - name: Set Interface Config
+     ansible.netcommon.netconf_config:
+       content: |
+         <config xmlns="urn:ietf:params:xml:ns:netconf:base:1.0">
+             <interfaces xmlns="urn:ietf:params:xml:ns:yang:ietf-interfaces">
+               <interface>
+                 <name>GigabitEthernet1</name>
+                 <description>Ansible description for Demo</description>
+               </interface>
+             </interfaces>
+         </config>
+         
+   - debug:
+       msg: "The configuration applied successfully"
+        
