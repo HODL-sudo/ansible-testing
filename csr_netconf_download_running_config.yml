@@ -1,8 +1,6 @@
 ---
 - name: Get and Save Running Configuration via NETCONF
   hosts: csr
-  # We need to run the final 'copy' task on the control node (AWX itself)
-  # so we delegate that specific task.
   connection: netconf
   gather_facts: no
 
@@ -19,16 +17,17 @@
           </filter>
       register: running_config_output
 
-    - name: Save the full running configuration to a file
-      ansible.builtin.copy:
-        # The 'content' parameter takes the data directly from our variable.
-        content: "{{ running_config_output.stdout }}"
-        # This is the destination file path *inside the AWX container*.
-        # We use the inventory_hostname variable to create a unique filename for each host.
-        dest: "/runner/artifacts/{{ inventory_hostname }}_running_config.xml"
-      # This task needs to run on the AWX node, not on the router.
+    # --- THIS IS THE FIX ---
+    # The set_stats module is used to populate the AWX Artifacts section.
+    - name: Expose the running configuration as a job artifact
+      ansible.builtin.set_stats:
+        data:
+          # The key 'running_configuration' is a custom name you choose.
+          # The value is the data you want to display.
+          running_configuration: "{{ running_config_output.stdout }}"
+      # This task must also run on the control node.
       delegate_to: localhost
 
     - name: Display a confirmation message
       debug:
-        msg: "Successfully retrieved and saved the configuration to /runner/artifacts/{{ inventory_hostname }}_running_config.xml"
+        msg: "Successfully retrieved the configuration and exposed it as an artifact."
