@@ -2,7 +2,7 @@
 - name: Secure file transfer with validation
   hosts: vms
   vars:
-    source_file: "/home/hany/branch1.yaml"
+    source_file: "branch1.yaml"
     destination_path: "/home/ncsadmin/"
     
   tasks:
