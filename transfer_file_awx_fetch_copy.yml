@@ -1,0 +1,64 @@
+---
+- name: Transfer file from one VM to another via AWX
+  hosts: localhost
+  gather_facts: no
+  vars:
+    source_vm: "10.1.1.14"
+    source_user: "hany"
+    source_password: "hany"
+    source_file: "/home/hany/branch1.yaml"
+    target_vm: "10.1.1.43"
+    target_user: "ncsadmin"
+    target_password: "ncsadmin"
+    destination_path: "/home/ncsadmin/"
+    temp_file: "/tmp/branch1.yaml"
+
+  tasks:
+    - name: Fetch file from source VM
+      fetch:
+        src: "{{ source_file }}"
+        dest: "{{ temp_file }}"
+        flat: yes
+      delegate_to: "{{ source_vm }}"
+      vars:
+        ansible_user: "{{ source_user }}"
+        ansible_ssh_pass: "{{ source_password }}"
+    - name: Check if file was fetched successfully
+      stat:
+        path: "{{ temp_file }}"
+      register: fetched_file
+
+    - name: Copy file to target VM
+      copy:
+        src: "{{ temp_file }}"
+        dest: "{{ destination_path }}"
+        backup: yes
+        mode: '0644'
+      delegate_to: "{{ target_vm }}"
+      vars:
+        ansible_user: "{{ target_user }}"
+        ansible_ssh_pass: "{{ target_password }}"
+      when: fetched_file.stat.exists
+
+    - name: Clean up temporary file
+      file:
+        path: "{{ temp_file }}"
+        state: absent
+
+    - name: Verify file transfer
+      stat:
+        path: "{{ destination_path }}/{{ source_file | basename }}"
+      delegate_to: "{{ target_vm }}"
+      vars:
+        ansible_user: "{{ target_user }}"
+      register: dest_stat
+
+    - name: Report transfer status
+      debug:
+        msg: |
+          Transfer Status:
+          - File: {{ source_file | basename }}
+          - Source: {{ source_vm }}:{{ source_file }}
+          - Destination: {{ target_vm }}:{{ destination_path }}
+          - Size: {{ dest_stat.stat.size | default('Unknown') }} bytes
+          - Transfer: {{ 'Success' if dest_stat.stat.exists else 'Failed' }}
