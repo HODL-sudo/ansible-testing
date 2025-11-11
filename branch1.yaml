@@ -1,0 +1,959 @@
+# Branch-1
+apiVersion: "k8s.cni.cncf.io/v1"
+kind: NetworkAttachmentDefinition
+metadata:
+  name: b1-inet
+  namespace: net
+spec:
+  config: '{
+    "cniVersion": "0.3.1",
+    "type": "macvlan",
+    "master": "ens4",
+    "mode": "passthru",
+    "ipam": { "type": "static", "addresses": [ { "address": "203.0.113.2/30" } ] }
+  }'
+---
+apiVersion: "k8s.cni.cncf.io/v1"
+kind: NetworkAttachmentDefinition
+metadata:
+  name: b1-mpls
+  namespace: net
+spec:
+  config: '{
+    "cniVersion": "0.3.1",
+    "type": "macvlan",
+    "master": "ens5",
+    "mode": "passthru",
+    "ipam": { "type": "static", "addresses": [ { "address": "192.0.2.2/30" } ] }
+  }'
+---
+apiVersion: "k8s.cni.cncf.io/v1"
+kind: NetworkAttachmentDefinition
+metadata:
+  name: b1-direct
+  namespace: net
+spec:
+  config: '{
+    "cniVersion": "0.3.1",
+    "type": "macvlan",
+    "master": "ens7",
+    "mode": "passthru",
+    "ipam": { "type": "static", "addresses": [ { "address": "200.10.10.1/30" } ] }
+  }'
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: b1-strongswan
+  namespace: net
+data:
+
+  ipsec.conf: |
+    # /etc/ipsec.conf
+    config setup
+        charondebug="ike 2, knl 2, cfg 2, net 2"
+        # Disable automatic policy routing
+        install_routes=no
+        install_virtual_ip=no
+
+    # --- Hub over Internet ---
+    conn hub-inet
+        keyexchange=ikev2
+        left=203.0.113.2        # Branch1 INET
+        leftid=b1-inet
+        right=203.0.113.1         # Hub INET towards Branch1
+        rightid=hub-inet
+        ike=aes256-sha256-modp2048!
+        esp=aes256-sha256!
+        authby=secret
+        auto=add
+        type=tunnel
+        mark=110
+        mobike=no
+        dpdaction=restart
+        dpddelay=30s
+        dpdtimeout=120s
+        leftsubnet=0.0.0.0/0
+        rightsubnet=0.0.0.0/0
+        leftupdown=/usr/local/bin/vti-updown.sh vti110 169.254.110.2/30 169.254.110.1/30 "" 110
+        leftfirewall=no
+        rightfirewall=no
+
+    # --- Hub over MPLS ---
+    conn hub-mpls
+        keyexchange=ikev2
+        left=192.0.2.2          # Branch1 MPLS
+        leftid=b1-mpls
+        right=192.0.2.1           # Hub MPLS towards Branch1
+        rightid=hub-mpls
+        ike=aes256-sha256-modp2048!
+        esp=aes256-sha256!
+        authby=secret
+        auto=add
+        type=tunnel
+        mark=120
+        mobike=no
+        dpdaction=restart
+        dpddelay=30s
+        dpdtimeout=120s
+        leftsubnet=0.0.0.0/0
+        rightsubnet=0.0.0.0/0
+        leftupdown=/usr/local/bin/vti-updown.sh vti120 169.254.120.2/30 169.254.120.1/30 "" 120
+        leftfirewall=no
+        rightfirewall=no
+
+    # --- Branch1 ↔ Branch2 direct data tunnel (optional) ---
+    conn b2-data
+        keyexchange=ikev2
+        left=200.10.10.1
+        leftid=b1-data
+        right=200.10.10.2         # adjust if Branch2 uses a different INET
+        rightid=b2-data
+        ike=aes256-sha256-modp2048!
+        esp=aes256-sha256!
+        authby=secret
+        rekey=yes
+        reauth=no
+        auto=route
+        type=tunnel
+        mark=230
+        mobike=no
+        dpdaction=restart
+        dpddelay=30s
+        dpdtimeout=120s
+        leftsubnet=10.50.100.0/24
+        rightsubnet=10.50.200.0/24
+        leftupdown=/usr/local/bin/vti-updown.sh vti230 169.254.230.1/30 169.254.230.2/30 "" 230
+        # Prevent automatic routing
+        leftfirewall=no
+        rightfirewall=no
+
+  ipsec.secrets: |
+    # /etc/ipsec.secrets
+    b1-inet hub-inet : PSK "PSK_B1_INET"
+    b1-mpls hub-mpls : PSK "PSK_B1_MPLS"
+    b1-data b2-data  : PSK "PSK_B1B2_DATA"
+
+
+---
+# Up/Down Script (One CM only)
+# =========================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: swan-scripts
+  namespace: net
+data:
+  vti-updown.sh: |
+    #!/bin/bash
+    VTI_NAME=$1
+    LOCAL_IP=$2
+    REMOTE_IP=$3
+    VRF_NAME=$4
+    MARK=$5
+
+    IP_CMD="ip"
+    echo "Using IP command: $IP_CMD"
+    echo "VTI UP: Creating $VTI_NAME"
+    echo "Local: $PLUTO_ME, Remote: $PLUTO_PEER, Mark: $MARK"
+
+    LOCAL_IP_ONLY=$(echo $LOCAL_IP | cut -d'/' -f1)
+    REMOTE_IP_ONLY=$(echo $REMOTE_IP | cut -d'/' -f1)
+
+    case "$PLUTO_VERB" in
+        up-client)
+            $IP_CMD tunnel del $VTI_NAME 2>/dev/null || true
+            $IP_CMD tunnel add $VTI_NAME mode vti local $PLUTO_ME remote $PLUTO_PEER key $MARK
+            $IP_CMD link set $VTI_NAME up
+            $IP_CMD addr add $LOCAL_IP dev $VTI_NAME
+
+            # CRITICAL: Add route in main table for VTI connectivity
+            $IP_CMD route add $REMOTE_IP_ONLY dev $VTI_NAME 2>/dev/null || true
+
+            case "$VTI_NAME" in
+                vti110)
+                    echo "Assigning $VTI_NAME to vrf-inet"
+                    $IP_CMD link set dev $VTI_NAME master vrf-inet
+                    $IP_CMD route add $REMOTE_IP_ONLY dev $VTI_NAME table 110 2>/dev/null || true
+                    ;;
+                vti120)
+                    echo "Assigning $VTI_NAME to vrf-mpls"
+                    $IP_CMD link set dev $VTI_NAME master vrf-mpls
+                    $IP_CMD route add $REMOTE_IP_ONLY dev $VTI_NAME table 120 2>/dev/null || true
+                    ;;
+                vti230)
+                    echo "Assigning $VTI_NAME to vrf-svc"
+                    $IP_CMD link set dev $VTI_NAME master vrf-svc
+                    $IP_CMD route add $REMOTE_IP_ONLY dev $VTI_NAME table 230 2>/dev/null || true
+                    ;;
+            esac
+            echo "VTI $VTI_NAME created successfully"
+            ;;
+        down-client)
+            echo "VTI DOWN: Removing $VTI_NAME"
+            $IP_CMD tunnel del $VTI_NAME 2>/dev/null || true
+            echo "VTI $VTI_NAME is DOWN"
+            ;;
+    esac
+    exit 0
+
+
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: snmpd-conf
+  namespace: net
+data:
+  snmpd.conf: |
+    com2sec readonly default public
+    group MyROGroup v1 readonly
+    group MyROGroup v2c readonly
+    view all included .1 80
+    access MyROGroup "" any noauth exact all none none
+    master agentx
+    agentXSocket /var/agentx/master
+
+---
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: b1-frr
+  namespace: net
+data:
+  daemons: |
+    zebra=yes
+    bgpd=yes
+    ospfd=no
+    ospf6d=no
+    ripd=no
+    ripngd=no
+    isisd=no
+    pimd=no
+    ldpd=no
+    nhrpd=no
+    eigrpd=no
+    babeld=no
+    sharpd=no
+    pbrd=no
+    bfdd=no
+    fabricd=no
+    vrrpd=no
+    snmpd=yes
+    
+    vtysh_enable=yes
+    zebra_options="  -A 127.0.0.1 -s 90000000"
+    bgpd_options="   -A 127.0.0.1"
+    snmpd_options="-LOw -f -Le"
+    
+  frr.conf: |
+    frr version 10.3.1_git
+    service integrated-vtysh-config
+    frr defaults traditional
+    hostname BRANCH1
+    log stdout
+    !
+    vrf vrf-inet
+      vni 110
+    exit-vrf
+    !
+    vrf vrf-mpls
+      vni 120
+    exit-vrf
+    !
+    vrf vrf-svc
+      vni 230
+    exit-vrf
+    !
+    interface lo
+      ip address 10.255.1.1/32
+    !
+    bfd
+      peer 169.254.110.1 vrf vrf-inet
+      peer 169.254.120.1 vrf vrf-mpls
+    !
+    ip prefix-list B1-LAN seq 5 permit 10.10.100.0/24
+    ip prefix-list B1-SVC seq 5 permit 10.50.100.0/24
+    ip prefix-list B2-NETWORKS seq 5 permit 10.10.200.0/24
+    ip prefix-list B2-NETWORKS seq 10 permit 10.20.200.0/24
+    ip prefix-list B2-NETWORKS seq 15 permit 10.50.200.0/24
+    !
+    route-map TAG-INET permit 10
+      set large-community 65000:100:110
+    !
+    route-map TAG-MPLS permit 10
+      set large-community 65000:100:120
+    !
+    route-map TAG-SVC permit 10
+      match ip address prefix-list B1-SVC
+      set large-community 65000:100:901
+    !
+    #Route-map for next-hop modification (SD-WAN data plane)
+    # route-map B1-SET-NH permit 10
+    #   match ip address prefix-list B2-NETWORKS
+    #   set ip next-hop 169.254.230.1
+    !
+    # route-map B1-SET-NH permit 15
+    #   match ip address prefix-list B1-LAN
+    #   set ip next-hop 169.254.230.1
+    # !
+    # route-map B1-SET-NH permit 20
+    #   match ip address prefix-list B1-SVC
+    #   set ip next-hop 169.254.230.1
+
+    !
+    route-map B1-SET-NH permit 30
+    !
+    route-map B1-ADVERTISE permit 10
+    match ip address prefix-list B1-LAN
+    set ip next-hop 169.254.230.1
+    !
+    route-map B1-ADVERTISE permit 15
+    match ip address prefix-list B1-SVC
+    set ip next-hop 169.254.230.1
+    !
+    route-map B1-ADVERTISE permit 20
+    !
+    router bgp 65001
+      bgp router-id 10.255.1.1
+      no bgp default ipv4-unicast
+      no bgp ebgp-requires-policy
+      !
+      address-family ipv4 vpn
+        redistribute connected
+        redistribute static
+      exit-address-family
+      !
+        address-family ipv4 unicast
+        redistribute connected
+        # network 10.10.100.0/24
+        # network 10.50.100.0/24
+      exit-address-family
+    !
+    router bgp 65001 vrf vrf-inet
+      bgp router-id 10.255.1.1
+      no bgp default ipv4-unicast
+      no bgp ebgp-requires-policy
+      neighbor 169.254.110.1 remote-as 65000
+      neighbor 169.254.110.1 description Hub-INET
+      neighbor 169.254.110.1 ebgp-multihop 2
+      neighbor 169.254.110.1 update-source vti110
+      neighbor 169.254.110.1 timers 10 30
+      neighbor 169.254.110.1 timers connect 5
+      !
+      address-family ipv4 unicast
+        neighbor 169.254.110.1 activate
+        neighbor 169.254.110.1 allowas-in 1
+        redistribute connected
+        network 10.10.100.0/24
+        neighbor 169.254.110.1 soft-reconfiguration inbound
+
+         # Set next-hop to direct tunnel for outbound advertisements
+        #  neighbor 169.254.110.1 route-map B1-ADVERTISE out
+         # Modify incoming routes to use direct tunnel
+        #  neighbor 169.254.110.1 route-map B1-SET-NH in
+      exit-address-family
+    !
+    router bgp 65001 vrf vrf-mpls
+      bgp router-id 10.255.1.1
+      no bgp default ipv4-unicast
+      no bgp ebgp-requires-policy
+      neighbor 169.254.120.1 remote-as 65000
+      neighbor 169.254.120.1 description Hub-MPLS
+      neighbor 169.254.120.1 ebgp-multihop 2
+      neighbor 169.254.120.1 update-source vti120
+      neighbor 169.254.120.1 timers 10 30
+      neighbor 169.254.120.1 timers connect 5
+
+      !
+      address-family ipv4 unicast
+        neighbor 169.254.120.1 activate
+        neighbor 169.254.120.1 allowas-in 1
+        redistribute connected
+        network 10.20.100.0/24
+        neighbor 169.254.120.1 soft-reconfiguration inbound
+        # neighbor 169.254.120.1 route-map B1-SET-NH in
+
+      exit-address-family
+    !
+    router bgp 65001 vrf vrf-svc
+      no bgp default ipv4-unicast
+      no bgp ebgp-requires-policy
+      !
+      address-family ipv4 unicast
+        network 10.50.100.0/24
+        redistribute connected
+      exit-address-family
+    !
+    line vty
+
+---
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: branch1
+  namespace: net
+  annotations:
+    k8s.v1.cni.cncf.io/networks: b1-inet@net1, b1-mpls@net2, b1-direct@net3
+    # Kuma sidecar injection
+    kuma.io/sidecar-injection: disabled # Modified by Fady
+
+    kuma.io/transparent-proxying: "enabled"
+    kuma.io/transparent-proxying-redirect-dns: "false"
+
+    kuma.io/transparent-proxying-exclude-inbound-ports: "179,500,4500"
+    kuma.io/transparent-proxying-exclude-outbound-ports: "179,500,4500"
+
+    # Exclude BGP and IPsec ports
+    kuma.io/traffic-exclude-inbound-ports: "179,500,4500"
+    kuma.io/traffic-exclude-outbound-ports: "179,500,4500"
+
+    # Exclude VTI IP ranges
+    kuma.io/traffic-exclude-inbound-ips: "169.254.0.0/16"
+    kuma.io/traffic-exclude-outbound-ips: "169.254.0.0/16"
+    kuma.io/transparent-proxying-exclude-inbound-interfaces: "vti110,vti120,vti230" # added by Fady
+    kuma.io/transparent-proxying-exclude-outbound-interfaces: "vti110,vti120,vti230" # added by Fady
+
+    # Transparent proxy exclusions
+    kuma.io/transparent-proxying-exclude-inbound-ports: "179,500,4500"
+    kuma.io/transparent-proxying-exclude-outbound-ports: "179,500,4500"
+    kuma.io/transparent-proxying-exclude-inbound-ips: "169.254.0.0/16,192.0.2.0/24,203.0.113.0/24"
+    kuma.io/transparent-proxying-exclude-outbound-ips: "169.254.0.0/16,192.0.2.0/24,203.0.113.0/24"
+
+    # Additional Kuma exclusions
+    kuma.io/transparent-proxying-exclude-uid: "0"
+    kuma.io/transparent-proxying-exclude-gid: "0"
+  labels:
+    app: branch1
+spec:
+  nodeSelector:
+    role: branch1
+  restartPolicy: Always
+
+  # Install modern iproute2 first, then bring up interfaces
+  initContainers:
+    - name: install-iproute2
+      image: mberner/strongswan:v1
+      # image: ubuntu:22.04
+      securityContext:
+        privileged: true
+      volumeMounts:
+        - mountPath: /shared
+          name: shared-binaries
+      command:
+        # - /bin/sh
+        - /bin/bash
+        - -c
+        - |
+          echo "=== Installing modern iproute2 in initContainer (Branch1) ==="
+
+          # Update and install build dependencies
+          apt update
+          apt install -y build-essential pkg-config libmnl-dev libelf-dev bison flex wget
+
+          # Download and compile iproute2
+          cd /tmp
+          wget https://github.com/iproute2/iproute2/archive/v6.1.0.tar.gz
+          tar -xzf v6.1.0.tar.gz
+          cd iproute2-6.1.0
+
+          # Configure and compile
+          make configure
+          make -j$(nproc)
+
+          # Copy binaries to shared volume
+          cp ip/ip /shared/ip
+          [ -f tc/tc ] && cp tc/tc /shared/tc || echo "tc not built"
+
+          # Verify
+          /shared/ip -V
+          /shared/ip link help 2>&1 | grep vrf && echo "VRF support confirmed!" || echo "VRF support missing"
+
+          echo "=== iproute2 installation completed (Branch1) ==="
+    - name: ifup
+      image: busybox
+      securityContext:
+        privileged: true
+      command:
+        - /bin/sh
+        - -c
+        - |
+          ip link set ens4 up || true
+          ip link set ens5 up || true
+          ip link set ens7 up || true
+          # also set the multus-created pod interfaces up (best-effort)
+          ip link set b1-inet up 2>/dev/null || true
+          ip link set b1-mpls up 2>/dev/null || true
+          ip link set b1-direct up 2>/dev/null || true
+
+  containers:
+    - name: strongswan
+      image: mberner/strongswan:v1
+      # image: ubuntu:22.04
+      imagePullPolicy: Always
+      securityContext:
+        privileged: true
+        capabilities:
+          add: ["NET_ADMIN","SYS_MODULE"]
+      volumeMounts:
+        - name: b1-strongswan
+          mountPath: /etc/ipsec.conf
+          subPath: ipsec.conf
+        - name: b1-strongswan
+          mountPath: /etc/ipsec.secrets
+          subPath: ipsec.secrets
+        - name: swan-scripts
+          mountPath: /usr/local/bin/vti-updown.sh
+          subPath: vti-updown.sh
+          readOnly: true
+        - mountPath: /lib/modules
+          name: modules
+          readOnly: true
+        - mountPath: /shared
+          name: shared-binaries
+      ports:
+        - containerPort: 500
+          protocol: UDP
+        - containerPort: 4500
+          protocol: UDP
+      command:
+        - /bin/sh
+        - -c
+        - |
+          echo "=== Starting strongSwan container (Branch1) ==="
+
+          # Install strongSwan and dependencies
+          apt update
+          apt install -y strongswan strongswan-pki iputils-ping iproute2 iptables wget rsyslog netcat
+
+
+
+          # Use modern iproute2 from shared volume
+          if [ -f /shared/ip ]; then
+            echo "Using modern iproute2 from initContainer"
+            cp /shared/ip /sbin/ip
+            [ -f /shared/tc ] && cp /shared/tc /sbin/tc
+            chmod +x /sbin/ip /sbin/tc
+          else
+            echo "ERROR: Modern iproute2 not found in shared volume"
+            exit 1
+          fi
+
+          # Verify VRF support
+          ip -V
+          ip link help 2>&1 | grep vrf && echo "VRF support available" || {
+            echo "ERROR: VRF support not available"
+            exit 1
+          }
+
+          # Wait for interfaces to be ready (Branch1 uses net1, net2)
+          echo "Waiting for multus interfaces..."
+          for i in {1..30}; do
+            if ip link show net1 >/dev/null 2>&1 && ip link show net2 >/dev/null 2>&1; then
+              echo "Multus interfaces found after ${i} seconds"
+              break
+            fi
+            sleep 1
+          done
+
+          # *** CRITICAL: Block table 220 BEFORE creating VRFs ***
+          echo "Blocking table 220 creation..."
+
+          # Create a dummy rule in table 220 to prevent auto-creation
+          ip rule add from 127.0.0.1 table 220 priority 1 2>/dev/null || true
+          ip route add blackhole 0.0.0.0/0 table 220 2>/dev/null || true
+
+          # Load VRF module
+          modprobe vrf && echo "VRF module loaded" || echo "VRF module not available"
+          lsmod | grep vrf
+
+          # Create VRFs (for data plane only - VTI interfaces will be assigned here)
+          echo "Creating VRFs for data plane..."
+          ip link add vrf-inet type vrf table 110 && echo "vrf-inet created" || echo "vrf-inet creation failed"
+          ip link add vrf-mpls type vrf table 120 && echo "vrf-mpls created" || echo "vrf-mpls creation failed"
+          ip link add vrf-svc type vrf table 230 && echo "vrf-svc created" || echo "vrf-svc creation failed"
+          ip link set vrf-inet up && echo "vrf-inet up" || echo "vrf-inet up failed"
+          ip link set vrf-mpls up && echo "vrf-mpls up" || echo "vrf-mpls up failed"
+          ip link set vrf-svc up && echo "vrf-svc up" || echo "vrf-svc up failed"
+
+          # Configure underlay interfaces in GLOBAL table (for IPsec establishment)
+          echo "Configuring underlay interfaces in GLOBAL table for IPsec..."
+
+          # Branch1 interfaces - KEEP IN GLOBAL TABLE
+          ip addr add 203.0.113.2/30 dev net1 && echo "net1 (INET) IP assigned (global)" || echo "net1 IP failed"
+          ip addr add 192.0.2.2/30 dev net2 && echo "net2 (MPLS) IP assigned (global)" || echo "net2 IP failed"
+
+          # Add routes for IPsec peers in GLOBAL table
+          echo "Adding IPsec peer routes in global table..."
+          ip route add 203.0.113.1/32 dev net1 src 203.0.113.2 || true
+          ip route add 192.0.2.1/32 dev net2 src 192.0.2.2 || true
+
+          # Configure direct Branch-to-Branch interface
+          echo "Configuring direct B1-B2 interface..."
+          ip addr add 200.10.10.1/30 dev net3 || echo "net3 not available, using existing interface"
+
+
+          # Add VRF routing rules
+          echo "Adding VRF routing rules for data plane..."
+          ip rule add priority 110 table 110 || true
+          ip rule add priority 120 table 120 || true
+          ip rule add priority 230 table 230 || true
+
+           # *** CRITICAL: Remove table 220 completely ***
+          ip rule del from 127.0.0.1 table 220 priority 1 2>/dev/null || true
+          ip rule del table 220 2>/dev/null || true
+          ip route flush table 220 2>/dev/null || true
+
+          # *** CRITICAL: Add direct route with higher priority ***
+          ip route add 200.10.10.2/32 dev net3 src 200.10.10.1 metric 1 || true
+
+          # Create LAN and SVC interfaces
+          ip link add br-lan type bridge
+          ip link set br-lan master vrf-inet
+          ip addr add 10.10.100.1/24 dev br-lan
+          ip link set br-lan up
+
+          ip link add br-mpls type bridge
+          ip link set br-mpls master vrf-mpls
+          ip addr add 10.20.100.1/24 dev br-mpls
+          ip link set br-mpls up
+
+          ip link add br-svc type bridge
+          ip link set br-svc master vrf-svc
+          ip addr add 10.50.100.1/24 dev br-svc
+          ip link set br-svc up
+
+          # Install basic packages
+          apt update
+          apt install -y rsyslog strongswan iputils-ping netcat iptables
+
+          # ===== STRONGSWAN SETUP =====
+          mkdir -p /var/log
+          touch /var/log/charon.log
+          modprobe af_key
+          modprobe xfrm_user
+          modprobe esp4
+          modprobe ah4
+
+          # Configure strongSwan with disabled policy routing
+          mkdir -p /var/log
+          touch /var/log/charon.log
+
+          # *** CRITICAL: Configure strongSwan to NOT install routes ***
+          mkdir -p /etc/strongswan.d
+          cat > /etc/strongswan.d/charon.conf << 'EOF'
+          charon {
+          install_routes = no
+          install_virtual_ip = no
+          routing_table = 0
+          routing_table_prio = 0
+          ignore_routing_tables = 220
+          }
+          EOF
+
+          # Enable IPv4 forwarding and disable rp_filter
+          sysctl -w net.ipv4.ip_forward=1
+          sysctl -w net.ipv4.conf.all.rp_filter=0
+          sysctl -w net.ipv4.conf.default.rp_filter=0
+          sysctl -w net.ipv4.conf.net1.rp_filter=0
+          sysctl -w net.ipv4.conf.net2.rp_filter=0
+
+          # Allow forwarding in iptables
+          iptables -I FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
+          iptables -I FORWARD -s 169.254.110.0/30 -d 169.254.110.0/30 -j ACCEPT
+          iptables -I FORWARD -s 169.254.120.0/30 -d 169.254.120.0/30 -j ACCEPT
+          iptables -I FORWARD -s 169.254.230.0/30 -d 169.254.230.0/30 -j ACCEPT
+
+          # Add comprehensive BGP bypass rules on Branch1
+          iptables -t nat -I OUTPUT 1 -p tcp --dport 179 -j ACCEPT
+          iptables -t nat -I OUTPUT 1 -p tcp --sport 179 -j ACCEPT
+          iptables -t nat -I OUTPUT 1 -s 169.254.110.2 -j ACCEPT
+          iptables -t nat -I OUTPUT 1 -d 169.254.110.1 -j ACCEPT
+          iptables -t nat -I OUTPUT 1 -o vti110 -j ACCEPT
+          iptables -t nat -I OUTPUT 1 -o vti120 -j ACCEPT
+
+          # Add mangle table rules to prevent packet marking
+          iptables -t mangle -I OUTPUT 1 -p tcp --dport 179 -j ACCEPT
+          iptables -t mangle -I OUTPUT 1 -p tcp --sport 179 -j ACCEPT
+          iptables -t mangle -I OUTPUT 1 -s 169.254.110.2 -j ACCEPT
+          iptables -t mangle -I OUTPUT 1 -d 169.254.110.1 -j ACCEPT
+
+          # Verify updown script
+          echo "Verifying updown script..."
+          ls -la /usr/local/bin/vti-updown.sh
+          chmod +x /usr/local/bin/vti-updown.sh
+
+          # Configure strongSwan logging
+          echo '
+          charon {
+            filelog {
+              /var/log/charon.log {
+                time_format = %b %e %T
+                default = 3
+                ike = 3
+                net = 3
+              }
+            }
+          }' > /etc/strongswan.d/charon-logging.conf
+
+          # Start strongSwan
+          ipsec start
+
+          # Wait for strongSwan to start
+          sleep 5
+
+          # Wait for connections to establish and create VTI tunnels
+          sleep 15
+
+          # Test connectivity before starting tunnels
+          echo "Testing connectivity to Hub..."
+          ping -c 2 203.0.113.1 || echo "INET connectivity failed"
+          ping -c 2 192.0.2.1 || echo "MPLS connectivity failed"
+
+          # Auto-start IPsec connections
+          # sleep 10
+          # echo "Starting IPsec connections..."
+          # ipsec up hub-inet
+          # ipsec up hub-mpls
+          # *** CRITICAL: Start aggressive table 220 monitor BEFORE strongSwan ***
+          (
+            while true; do
+              sleep 2
+
+              # Check and remove table 220
+              if ip rule show | grep -q "table 220"; then
+                echo "$(date): Removing table 220 rules..."
+                while ip rule show | grep -q "table 220"; do
+                  ip rule del table 220 2>/dev/null || break
+                done
+              fi
+
+              # Flush table 220 routes
+              ip route flush table 220 2>/dev/null || true
+
+              # Ensure direct route exists and has priority
+              if ! ip route get 200.10.10.2 2>/dev/null | grep -q "dev ens7"; then
+                echo "$(date): Restoring direct route..."
+                ip route del 200.10.10.2 2>/dev/null || true
+                ip route add 200.10.10.2/32 dev ens7 src 200.10.10.1 metric 1 2>/dev/null || true
+              fi
+
+              # Clear route cache
+              ip route flush cache 2>/dev/null || true
+            done
+          ) &
+
+          # Force create VTI tunnels if IPsec is up (Branch1 version)
+          echo "Starting VTI monitoring loop..."
+          while true; do
+            # Check if IPsec connections are established and create VTI tunnels
+            if ipsec status | grep -q "hub-inet.*ESTABLISHED"; then
+              if ! ip tunnel show | grep -q "vti110"; then
+                echo "Creating VTI110 for hub-inet connection"
+                PLUTO_VERB=up-client PLUTO_ME=203.0.113.2 PLUTO_PEER=203.0.113.1 \
+                /usr/local/bin/vti-updown.sh vti110 169.254.110.2/30 169.254.110.1/30 "" 110
+              fi
+            fi
+
+            if ipsec status | grep -q "hub-mpls.*ESTABLISHED"; then
+              if ! ip tunnel show | grep -q "vti120"; then
+                echo "Creating VTI120 for hub-mpls connection"
+                PLUTO_VERB=up-client PLUTO_ME=192.0.2.2 PLUTO_PEER=192.0.2.1 \
+                /usr/local/bin/vti-updown.sh vti120 169.254.120.2/30 169.254.120.1/30 "" 120
+              fi
+            fi
+
+            # Create VTI230 for direct Branch-to-Branch data plane (SD-WAN)
+            if ! ip tunnel show | grep -q "vti230"; then
+              echo "Creating VTI230 for SD-WAN direct data plane"
+              PLUTO_VERB=up-client PLUTO_ME=200.10.10.1 PLUTO_PEER=200.10.10.2 \
+              /usr/local/bin/vti-updown.sh vti230 169.254.230.1/30 169.254.230.2/30 "" 230
+
+              # Add static routes for direct data plane
+              ip route add 10.10.200.0/24 dev vti110 table 110 || true
+              ip route add 10.20.200.0/24 dev vti120 table 120 || true
+              ip route add 10.50.200.0/24 dev vti230 table 230|| true
+            fi
+
+            # After VTI creation, restart FRR if needed
+            if ip tunnel show | grep -q "vti110" && ip tunnel show | grep -q "vti120" && ip tunnel show | grep -q "vti230"; then
+              echo "All VTI interfaces ready, restarting FRR to reload config..."
+              pkill -f "tail -f /var/log/frr" || true
+            fi
+
+            sleep 10
+          done &
+
+          # Force remove any table 220 created by strongSwan
+          ip rule del table 220 2>/dev/null || true
+          ip route flush table 220 2>/dev/null || true
+          ip route add 200.10.10.2/32 dev ens7 src 200.10.10.1 metric 1 2>/dev/null || true
+
+          # Keep logs tailing
+          tail -f /var/log/charon.log
+
+
+    - name: frr
+      # image: quay.io/frrouting/frr:10.1.3
+      # image: quay.io/frrouting/frr:10.3.1
+      image: frrouting/frr:v10.3.1-ubuntu
+
+
+      securityContext:
+        privileged: true
+        capabilities:
+          add: ["NET_ADMIN","NET_RAW","SYS_ADMIN"]
+      volumeMounts:
+      - name: frr-config
+        mountPath: /etc/frr/frr.conf
+        subPath: frr.conf
+      - name: frr-config
+        mountPath: /etc/frr/daemons
+        subPath: daemons
+      - name: snmpd-conf
+        mountPath: /etc/snmp/snmpd.conf
+        subPath: snmpd.conf  
+      ports:
+        - containerPort: 161
+          protocol: UDP
+  
+      command:
+      - /bin/sh
+      - -c
+      - |
+        # Wait for interfaces to be ready
+        sleep 20
+        
+        # Remove any problematic broad rules
+        ip rule del from all to 10.0.0.0/8 lookup main 2>/dev/null || true
+        
+        # Add specific management rules
+        ip rule add to 10.1.0.0/16 lookup main priority 50 2>/dev/null || true
+        
+        # Add VRF-specific rules (no more table 103!)
+        ip rule add to 10.20.200.0/24 lookup 120 priority 99 2>/dev/null || true
+        ip rule add to 10.10.200.0/24 lookup 110 priority 99 2>/dev/null || true
+        
+        # Add only specific vrf-svc rule for table 230
+        ip rule add from all iif vti230 lookup 230 priority 100 2>/dev/null || true
+        
+        # Flush caches
+        ip route flush cache
+        apt update && apt install -y snmpd snmp frr-snmp
+
+        # Create required directories
+        mkdir -p /var/run/frr /var/log/frr
+        chown frr:frr /var/run/frr /var/log/frr
+        
+
+        # Create vtysh.conf
+        cat > /etc/frr/vtysh.conf << EOF
+        service integrated-vtysh-config
+        EOF
+
+        # Enable IP forwarding
+        sysctl -w net.ipv4.ip_forward=1
+
+        apt update
+        apt install -y snmpd frr-snmp net-snmp-utils
+
+        
+        mkdir -p /var/agentx /var/run/frr /var/log/frr;
+        chmod 755 /var/agentx;
+        echo 'master agentx' > /etc/snmp/snmpd.conf;
+        echo 'agentXSocket /var/agentx/master' >> /etc/snmp/snmpd.conf;
+        echo 'rocommunity public' >> /etc/snmp/snmpd.conf;
+
+        # Enable frr-snmp daemon
+        sed -i 's/snmpd=no/snmpd=yes/' /etc/frr/daemons;
+
+        # Start SNMP daemon
+        /usr/sbin/snmpd -Lo -f &
+
+
+        # Keep process running
+        tail -f /var/log/frr/zebra.log
+      
+
+
+        # Wait a bit for socket
+        sleep 2
+
+        # Start FRR daemons
+        /usr/lib/frr/frrinit.sh start
+
+        
+
+        # Wait for daemons to start
+        sleep 5
+
+        # Check if BGP is running
+        ps aux | grep bgpd
+
+        # Keep process running
+        tail -f /var/log/frr/zebra.log
+
+        # Wait for VTI interfaces and reload config
+        (
+          echo "Waiting for VTI interfaces to reload FRR config..."
+          i=1
+          while [ $i -le 60 ]; do
+            if ip link show vti110 >/dev/null 2>&1 && ip link show vti120 >/dev/null 2>&1; then
+              echo "VTI interfaces ready, reloading FRR configuration..."
+              sleep 5  # Give FRR time to settle
+
+              # Reload the configuration file
+              vtysh -f /etc/frr/frr.conf
+
+              # Verify and apply missing activate commands
+              vtysh -c "configure terminal" \
+                    -c "router bgp 65001 vrf vrf-inet" \
+                    -c "address-family ipv4 unicast" \
+                    -c "neighbor 169.254.110.1 activate" \
+                    -c "exit-address-family" \
+                    -c "exit" \
+                    -c "router bgp 65001 vrf vrf-mpls" \
+                    -c "address-family ipv4 unicast" \
+                    -c "neighbor 169.254.120.1 activate" \
+                    -c "exit-address-family" \
+                    -c "exit" \
+                    -c "exit"
+
+              echo "FRR configuration reloaded successfully"
+              break
+            fi
+            echo "Waiting for VTI interfaces... ($i/60)"
+            i=$((i + 1))
+            sleep 5
+          done
+        ) &
+
+
+        # Keep container running and show logs
+        tail -f /var/log/frr/*.log /dev/null
+
+  volumes:
+    - name: b1-strongswan
+      configMap:
+        name: b1-strongswan
+    - name: swan-scripts
+      configMap:
+        name: swan-scripts
+        defaultMode: 0755
+        items:
+          - key: vti-updown.sh
+            path: vti-updown.sh
+    - name: modules
+      hostPath:
+        path: /lib/modules
+    - name: frr-config
+      configMap:
+        name: b1-frr
+    - name: snmpd-conf
+      configMap:
+        name: snmpd-conf    
+    - name: shared-binaries
+      emptyDir: {}

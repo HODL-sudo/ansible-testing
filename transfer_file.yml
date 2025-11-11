@@ -1,0 +1,50 @@
+---
+- name: Secure file transfer with validation
+  hosts: vms
+  vars:
+    source_file: "/home/hany/branch1.yaml"
+    destination_path: "/home/ncsadmin/"
+    
+  tasks:
+    - name: Check if source file exists
+      stat:
+        path: "{{ source_file }}"
+      register: source_stat
+      delegate_to: localhost
+      run_once: true
+    
+    - name: Fail if source file doesn't exist
+      fail:
+        msg: "Source file {{ source_file }} does not exist"
+      when: not source_stat.stat.exists
+      run_once: true
+    
+    - name: Create destination directory if it doesn't exist
+      file:
+        path: "{{ destination_path }}"
+        state: directory
+        mode: '0755'
+    
+    - name: Transfer file with checksum verification
+      copy:
+        src: "{{ source_file }}"
+        dest: "{{ destination_path }}"
+        backup: yes
+        validate: "test -f %s"  # Validate file exists after copy
+      register: transfer_result
+    
+    - name: Verify file transfer
+      stat:
+        path: "{{ destination_path }}/{{ source_file | basename }}"
+      register: dest_stat
+    
+    - name: Report transfer status
+      debug:
+        msg: |
+          Transfer Status for your file:
+          - File: {{ source_file | basename }}
+          - Size: {{ dest_stat.stat.size }} bytes
+          - Checksum: {{ dest_stat.stat.checksum }}
+          - Transfer: {{ 'Success' if transfer_result.changed else 'Already exists' }}
+
+
