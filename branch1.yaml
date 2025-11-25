@@ -197,7 +197,24 @@ data:
     esac
     exit 0
 
-
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: branch1-snmp
+  namespace: net
+  labels:
+    app: branch1
+spec:
+  type: NodePort
+  selector:
+    app: branch1   # use branch1 Pod label
+  ports:
+    - name: snmp
+      protocol: UDP
+      port: 161
+      targetPort: 161
+      nodePort: 30161  # external port you’ll use from Zabbix
 
 ---
 apiVersion: v1
@@ -249,7 +266,7 @@ data:
     snmpd_options="-LOw -f -Le"
     
   frr.conf: |
-    frr version 10.3.1_git
+    frr version 10.1.3_git
     service integrated-vtysh-config
     frr defaults traditional
     hostname BRANCH1
@@ -493,7 +510,8 @@ spec:
     - name: strongswan
       image: mberner/strongswan:v1
       # image: ubuntu:22.04
-      imagePullPolicy: Always
+      imagePullPolicy: IfNotPresent  
+      # imagePullPolicy: Always
       securityContext:
         privileged: true
         capabilities:
@@ -797,9 +815,9 @@ spec:
 
 
     - name: frr
-      # image: quay.io/frrouting/frr:10.1.3
+      image: quay.io/frrouting/frr:10.1.3
       # image: quay.io/frrouting/frr:10.3.1
-      image: frrouting/frr:v10.3.1-ubuntu
+
 
 
       securityContext:
@@ -816,6 +834,10 @@ spec:
       - name: snmpd-conf
         mountPath: /etc/snmp/snmpd.conf
         subPath: snmpd.conf  
+      - name: frr-vol
+        mountPath: /etc/frr
+      - name: agentx
+        mountPath: /var/agentx  
       ports:
         - containerPort: 161
           protocol: UDP
@@ -857,21 +879,21 @@ spec:
         # Enable IP forwarding
         sysctl -w net.ipv4.ip_forward=1
 
-        apt update
-        apt install -y snmpd frr-snmp net-snmp-utils
+        # apt update
+        # apt install -y snmpd frr-snmp net-snmp-utils
 
         
-        mkdir -p /var/agentx /var/run/frr /var/log/frr;
-        chmod 755 /var/agentx;
-        echo 'master agentx' > /etc/snmp/snmpd.conf;
-        echo 'agentXSocket /var/agentx/master' >> /etc/snmp/snmpd.conf;
-        echo 'rocommunity public' >> /etc/snmp/snmpd.conf;
+        # mkdir -p /var/agentx /var/run/frr /var/log/frr;
+        # chmod 755 /var/agentx;
+        # echo 'master agentx' > /etc/snmp/snmpd.conf;
+        # echo 'agentXSocket /var/agentx/master' >> /etc/snmp/snmpd.conf;
+        # echo 'rocommunity public' >> /etc/snmp/snmpd.conf;
 
-        # Enable frr-snmp daemon
-        sed -i 's/snmpd=no/snmpd=yes/' /etc/frr/daemons;
+        # # Enable frr-snmp daemon
+        # sed -i 's/snmpd=no/snmpd=yes/' /etc/frr/daemons;
 
-        # Start SNMP daemon
-        /usr/sbin/snmpd -Lo -f &
+        # # Start SNMP daemon
+        # /usr/sbin/snmpd -Lo -f &
 
 
         # Keep process running
@@ -934,6 +956,29 @@ spec:
 
         # Keep container running and show logs
         tail -f /var/log/frr/*.log /dev/null
+    - name: snmp
+      image: ubuntu:22.04
+      securityContext:
+        privileged: true
+      command:
+        - /bin/sh
+        - -c
+        - |
+          apt update && DEBIAN_FRONTEND=noninteractive apt install -y snmpd snmp frr-snmp
+          mkdir -p /var/agentx
+          chmod 755 /var/agentx
+          echo 'master agentx' > /etc/snmp/snmpd.conf
+          echo 'agentXSocket /var/agentx/master' >> /etc/snmp/snmpd.conf
+          echo 'rocommunity public' >> /etc/snmp/snmpd.conf
+          sed -i 's/snmpd=no/snmpd=yes/' /etc/frr/daemons || true
+          /usr/sbin/snmpd -f -Lo
+      volumeMounts:
+        - name: frr-vol
+          mountPath: /etc/frr
+        - name: agentx
+          mountPath: /var/agentx
+
+   
 
   volumes:
     - name: b1-strongswan
@@ -954,6 +999,10 @@ spec:
         name: b1-frr
     - name: snmpd-conf
       configMap:
-        name: snmpd-conf    
+        name: snmpd-conf  
+    - name: frr-vol
+      emptyDir: {}
+    - name: agentx
+      emptyDir: {}      
     - name: shared-binaries
       emptyDir: {}
