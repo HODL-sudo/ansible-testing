@@ -8,8 +8,8 @@
     source_password: "hany"
     source_file: "/home/hany/branch1.yaml"
     target_vm: "10.1.1.43"
-    target_user: "hany"
-    target_password: "hany"
+    target_user: "ncsadmin"
+    target_password: "ncsadmin"
     destination_path: "/home/ncsadmin/"
     temp_file: "/tmp/branch1.yaml"
 
