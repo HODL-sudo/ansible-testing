@@ -7,10 +7,10 @@
     source_user: "hany"
     source_password: "hany"
     source_file: "/home/hany/branch1.yaml"
-    target_vm: "10.1.104.102"
+    target_vm: "10.1.104.112"
     target_user: "user"
     target_password: "Test123"
-    destination_path: "/home/user/"
+    destination_path: "/home/user/TEST/"
     temp_file: "/tmp/branch1.yaml"
 
   tasks:
