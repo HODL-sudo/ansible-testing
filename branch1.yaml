@@ -969,7 +969,7 @@ spec:
           chmod 755 /var/agentx
           echo 'master agentx' > /etc/snmp/snmpd.conf
           echo 'agentXSocket /var/agentx/master' >> /etc/snmp/snmpd.conf
-          echo 'rocommunity public' >> /etc/snmp/snmpd.conf
+          echo 'rocommunity cumma' >> /etc/snmp/snmpd.conf
           sed -i 's/snmpd=no/snmpd=yes/' /etc/frr/daemons || true
           /usr/sbin/snmpd -f -Lo
       volumeMounts:
