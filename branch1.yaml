@@ -224,7 +224,7 @@ metadata:
   namespace: net
 data:
   snmpd.conf: |
-    com2sec readonly default public
+    com2sec readonly default cumma
     group MyROGroup v1 readonly
     group MyROGroup v2c readonly
     view all included .1 80
