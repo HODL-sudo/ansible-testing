@@ -64,6 +64,10 @@
           {{ wait_result.stdout }}
           {% endif %}
 
+    - name: Sleep for 5 seconds
+      wait_for:
+        timeout: 5
+        
     - name: config ipsec tunnels 
       shell: |
         microk8s kubectl exec -n net -c strongswan branch1 -- bash -c "ipsec up hub-inet"
