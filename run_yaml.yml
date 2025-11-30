@@ -1,6 +1,6 @@
 ---
 - name: Execute commands on Linux VM
-  hosts: linux_vm
+  hosts: vms
 #  become: yes  # Use sudo privileges if needed
   gather_facts: yes
   vars:
