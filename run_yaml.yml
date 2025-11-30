@@ -5,6 +5,8 @@
   gather_facts: yes
   vars:
     namespace: "net"
+    pod_name: "branch1"
+    timeout_seconds: 100
   
   tasks:
     - name: apply branch yaml file
@@ -15,36 +17,60 @@
       register: kubectl_output
       changed_when: false
 
-    - name: Sleep for 30 seconds
-      wait_for:
-        timeout: 30
-          
-    - name: Get pods status in namespace
-      shell: microk8s kubectl get pods -n {{ namespace }}
-      register: kubectl_output
-      changed_when: false
-            
-    - name: Display kubectl output
-      debug:
-        msg: "{{ kubectl_output.stdout }}"
-        
-    - name: Check if 'Running' status exists in output
-      set_fact:
-        pods_running: "{{ 'Running' in kubectl_output.stdout }}"
-        
-    - name: Display result of Running status check
+    - name: Get initial pod status
+      shell: microk8s kubectl get pods -n {{ namespace }} -o wide
+      register: initial_status
+      failed_when: initial_status.rc != 0
+      
+    - name: Check current status
       debug:
         msg: |
-          Running status found: {{ pods_running }}
-          {% if pods_running %}
-          ✅ At least one pod is in Running state
-          {% else %}
-          ❌ No pods are in Running state
-          {% endif %}
+          Initial pod status:
+          {{ initial_status.stdout }}
           
-    # - name: Fail if no pods are running (optional)
-    #   fail:
-    #     msg: "No pods are in Running state in namespace {{ namespace }}"
-    #   when: not pods_running
-    #   # Comment out the above 3 lines if you don't want the playbook to fail 
+    - name: Determine if pod is already running
+      set_fact:
+        is_running: "{{ 'Running' in initial_status.stdout }}"
+        
+    - name: Wait for pod to be in Running state (if not already)
+      shell: |
+        timeout {{ timeout_seconds }} bash -c '
+        while true; do
+          status=$(microk8s kubectl get pods -n {{ namespace }} {{ pod_name }} --no-headers | awk "{print \$3}")
+          echo "Current status: $status"
+          if [ "$status" = "Running" ]; then
+            echo "Pod is now Running!"
+            microk8s kubectl get pods -n {{ namespace }}
+            exit 0
+          fi
+          sleep 5
+        done'
+      register: wait_result
+      when: not is_running
+      
+    - name: Display result for already running pod
+      shell: microk8s kubectl get pods -n {{ namespace }}
+      register: current_status
+      when: is_running
+      
+    - name: Show final status
+      debug:
+        msg: |
+          {% if is_running %}
+          Pod was already in Running state:
+          {{ current_status.stdout }}
+          {% else %}
+          Pod monitoring result:
+          {{ wait_result.stdout }}
+          {% endif %}
+
+    # - name: config ipsec tunnels 
+    #   shell: |
+    #     microk8s kubectl exec -it branch1 -n net -c strongswan -- bash ipsec up hub-inet 
+    #     microk8s kubectl exec -it branch1 -n net -c strongswan -- bash ipsec up hub-mpls 
+    #     microk8s kubectl exec -it branch1 -n net -c strongswan -- bash ipsec up b2-data
+
+    # - name: Sleep for 30 seconds
+    #   wait_for:
+    #     timeout: 30
 
