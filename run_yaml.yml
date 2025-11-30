@@ -4,7 +4,7 @@
 #  become: yes  # Use sudo privileges if needed
   gather_facts: yes
   vars:
-    namespace: "net"
+    pod_namespace: "net"
     pod_name: "branch1"
     timeout_seconds: 100
   
@@ -13,12 +13,12 @@
       shell: microk8s kubectl apply -f TEST/branch1.yaml
 
     - name: Get pods status in namespace
-      shell: microk8s kubectl get pods -n {{ namespace }}
+      shell: microk8s kubectl get pods -n {{ pod_namespace }}
       register: kubectl_output
       changed_when: false
 
     - name: Get initial pod status
-      shell: microk8s kubectl get pods -n {{ namespace }} -o wide
+      shell: microk8s kubectl get pods -n {{ pod_namespace }} -o wide
       register: initial_status
       failed_when: initial_status.rc != 0
       
@@ -36,11 +36,11 @@
       shell: |
         timeout {{ timeout_seconds }} bash -c '
         while true; do
-          status=$(microk8s kubectl get pods -n {{ namespace }} {{ pod_name }} --no-headers | awk "{print \$3}")
+          status=$(microk8s kubectl get pods -n {{ pod_namespace }} {{ pod_name }} --no-headers | awk "{print \$3}")
           echo "Current status: $status"
           if [ "$status" = "Running" ]; then
             echo "Pod is now Running!"
-            microk8s kubectl get pods -n {{ namespace }}
+            microk8s kubectl get pods -n {{ pod_namespace }}
             exit 0
           fi
           sleep 5
@@ -49,7 +49,7 @@
       when: not is_running
       
     - name: Display result for already running pod
-      shell: microk8s kubectl get pods -n {{ namespace }}
+      shell: microk8s kubectl get pods -n {{ pod_namespace }}
       register: current_status
       when: is_running
       
