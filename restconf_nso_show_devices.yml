@@ -1,0 +1,64 @@
+---
+- name: RESTCONF call towards NSO 
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars:
+      api_username: sadek
+      api_password: 1 
+  tasks:
+    - name: Send REST API call
+      uri:
+        url: "http://10.1.1.135:8080/restconf/tailf/query"
+        method: POST
+        url_username: "{{ api_username }}"
+        url_password: "{{ api_password }}"
+        headers:
+          Content-Type: "application/yang-data+json"
+        body_format: json
+        body: 
+          "tailf-rest-query:immediate-query":
+            foreach: "/devices/device"
+            select:
+              - label: "name"
+                expression: "name"
+                result-type: "string"
+              - label: "address"
+                expression: "address"
+                result-type: "string"
+        force_basic_auth: yes
+      register: nso_response
+
+    - name: Extract device information
+      set_fact:
+        devices: "{{ nso_response.json['tailf-rest-query:query-result']['result'] }}"
+
+    - name: Display devices in readable format
+      debug:
+        msg: |
+          Device: {{ item.select[0].value }}
+          IP Address: {{ item.select[1].value }}
+          ---
+      loop: "{{ devices }}"
+
+    - name: Create device inventory
+      set_fact:
+        device_inventory: "{{ device_inventory | default([]) + [{'name': item.select[0].value, 'ip': item.select[1].value}] }}"
+      loop: "{{ devices }}"
+
+    - name: Show clean device inventory
+      debug:
+        var: device_inventory
+
+    - name: Show raw JSON response
+      debug:
+        var: nso_response.json
+      no_log: false
+
+    - name: Show just the result array
+      debug:
+        var: nso_response.json['tailf-rest-query:query-result']['result']
+      no_log: false
+
+    
