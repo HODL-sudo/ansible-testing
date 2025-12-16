@@ -1,6 +1,6 @@
 ---
-- name: Get LCM Architecture Data
-  hosts: localhost
+- name: Get LCM Architecture Data via Gateway Host
+  hosts: gateway_hosts
   gather_facts: false
   vars:
     lcm_base_url: "https://lcm.sahrd.io/public/external/api/1"
@@ -17,13 +17,12 @@
         force_basic_auth: yes
         return_content: yes
         status_code: 200
+        timeout: 30
       register: token_response
-      no_log: true  # Hide verbose token response
 
     - name: Extract token from response
       set_fact:
         access_token: "{{ token_response.json.data.token }}"
-      no_log: true  # Hide token for security
 
     - name: Get architecture data
       uri:
@@ -33,13 +32,10 @@
           Authorization: "Bearer {{ access_token }}"
         return_content: yes
         status_code: 200
+        timeout: 30
       register: architecture_response
-      no_log: true  # Hide verbose response
 
     - name: Display clean architecture data
       debug:
         var: architecture_response.json
         verbosity: 0
-
-
-    
