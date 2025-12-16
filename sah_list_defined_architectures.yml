@@ -18,12 +18,12 @@
         return_content: yes
         status_code: 200
       register: token_response
-      no_log: true  # Hide verbose token response
+      #no_log: true  # Hide verbose token response
 
     - name: Extract token from response
       set_fact:
         access_token: "{{ token_response.json.data.token }}"
-      no_log: true  # Hide token for security
+      #no_log: true  # Hide token for security
 
     - name: Get architecture data
       uri:
@@ -34,7 +34,7 @@
         return_content: yes
         status_code: 200
       register: architecture_response
-      no_log: true  # Hide verbose response
+      #no_log: true  # Hide verbose response
 
     - name: Display clean architecture data
       debug:
