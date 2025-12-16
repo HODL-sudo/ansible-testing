@@ -1,0 +1,45 @@
+---
+- name: Get LCM Architecture Data
+  hosts: localhost
+  gather_facts: false
+  vars:
+    lcm_base_url: "https://lcm.sahrd.io/public/external/api/1"
+    api_username: "oinis-api"
+    api_password: "7{;+!j}X~i@7wkKinZ"
+  
+  tasks:
+    - name: Get authentication token
+      uri:
+        url: "{{ lcm_base_url }}/token/lcm"
+        method: POST
+        user: "{{ api_username }}"
+        password: "{{ api_password }}"
+        force_basic_auth: yes
+        return_content: yes
+        status_code: 200
+      register: token_response
+      no_log: true  # Hide verbose token response
+
+    - name: Extract token from response
+      set_fact:
+        access_token: "{{ token_response.json.data.token }}"
+      no_log: true  # Hide token for security
+
+    - name: Get architecture data
+      uri:
+        url: "{{ lcm_base_url }}/architecture"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ access_token }}"
+        return_content: yes
+        status_code: 200
+      register: architecture_response
+      no_log: true  # Hide verbose response
+
+    - name: Display clean architecture data
+      debug:
+        var: architecture_response.json
+        verbosity: 0
+
+
+    
