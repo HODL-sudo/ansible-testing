@@ -1,0 +1,55 @@
+---
+- name: Run Ethra commands in one session
+  hosts: localhost
+  gather_facts: no
+
+  tasks:
+    - name: Execute all commands in a single SSH session
+      expect:
+        command: ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ansible@10.1.104.124
+        timeout: 60
+        responses:
+          "(?i)password:": "admin"
+          ">>": 
+            - "show security status -s"
+            - "show interfaces vpn-gre0 service-vpn conf"
+            - "show security statistics -s"
+            - "\x04" 
+      register: full_session
+      failed_when: false
+
+    - name: Parse and Clean Output
+      set_fact:
+        clean_text: "{{ full_session.stdout | default('') | regex_replace('\\r', '\n') | regex_replace('\\x1B\\[[0-9;]*[A-Za-z]', '') }}"
+
+    - name: Split into parts
+      set_fact:
+        session_parts: "{{ clean_text.split('>>') }}"
+      when: clean_text != ""
+
+    - name: Assign parts to variables
+      set_fact:
+        security_output: "{{ session_parts[1].split('\n') | map('trim') | select('search', '\\S') | list if session_parts|length > 1 else [] }}"
+        interface_output: "{{ session_parts[2].split('\n') | map('trim') | select('search', '\\S') | list if session_parts|length > 2 else [] }}"
+        statistics_output: "{{ session_parts[3].split('\n') | map('trim') | select('search', '\\S') | list if session_parts|length > 3 else [] }}"
+
+    - name: Validate that all commands returned data
+      assert:
+        that:
+          - security_output | length > 0
+          - interface_output | length > 0
+          - statistics_output | length > 0
+        fail_msg: "Playbook failed: One or more commands returned no output from the Ethra device."
+        success_msg: "All commands returned data successfully."
+
+    - name: Show Security Status
+      debug:
+        var: security_output
+
+    - name: Show Interface Config
+      debug:
+        var: interface_output
+
+    - name: Show Security Statistics
+      debug:
+        var: statistics_output
