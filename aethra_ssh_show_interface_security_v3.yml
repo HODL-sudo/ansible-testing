@@ -64,4 +64,4 @@
         msg:
           security: "{{ security_output }}"
           interface: "{{ interface_output }}"
-          stats: "{{ statistics_output }}    
+          stats: "{{ statistics_output }}"    
