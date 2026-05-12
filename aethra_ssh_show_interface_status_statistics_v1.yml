@@ -1,0 +1,78 @@
+---
+- name: Run Aethra commands in one session
+  hosts: localhost
+  gather_facts: no
+
+  vars:
+    ip_address: "{{ ip }}"
+    username: "{{ user }}"
+    password: "{{ pass }}"
+    ethra_interface1: "{{ interface1 }}"
+    ethra_interface2: "{{ interface2 }}"
+
+  tasks:
+    - name: Execute all commands in a single SSH session
+      expect:
+        command: ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {{ username }}@{{ ip_address }}
+        timeout: 60
+        responses:
+          "(?i)password:": "{{ password }}"
+          ">>": 
+            - "show interfaces {{ ethra_interface1 }} status -s"
+            - "show interfaces {{ ethra_interface1 }} statistics -s"
+            - "show interfaces {{ ethra_interface2 }} status -s"
+            - "show interfaces {{ ethra_interface2 }} statistics -s"
+            - "\x04" 
+      register: full_session
+      failed_when: false
+
+    - name: Parse and Clean Output
+      set_fact:
+        clean_text: "{{ full_session.stdout | default('') | regex_replace('\\r', '\n') | regex_replace('\\x1B\\[[0-9;]*[A-Za-z]', '') }}"
+
+    - name: Split into parts
+      set_fact:
+        session_parts: "{{ clean_text.split('>>') }}"
+      when: clean_text != ""
+
+    - name: Assign parts to variables
+      set_fact:
+        interface1_status_output: "{{ session_parts[1].split('\n') | map('trim') | select('search', '\\S') | list if session_parts|length > 1 else [] }}"
+        interface1_statistics_output: "{{ session_parts[2].split('\n') | map('trim') | select('search', '\\S') | list if session_parts|length > 2 else [] }}"
+        interface2_status_output: "{{ session_parts[3].split('\n') | map('trim') | select('search', '\\S') | list if session_parts|length > 3 else [] }}"
+        interface2_statistics_output: "{{ session_parts[4].split('\n') | map('trim') | select('search', '\\S') | list if session_parts|length > 4 else [] }}"
+
+    - name: Validate that all commands returned data
+      assert:
+        that:
+          - interface1_status_output | length > 0
+          - interface1_statistics_output | length > 0
+          - interface2_status_output | length > 0
+          - interface2_statistics_output | length > 0
+        fail_msg: "Playbook failed: One or more commands returned no output from the Aethra device."
+        success_msg: "All commands returned data successfully."
+
+    - name: Show interface1 Status
+      debug:
+        var: interface1_status_output
+
+    - name: Show interface1 Statistics
+      debug:
+        var: interface1_statistics_output
+
+    - name: Show interface2 Status
+      debug:
+        var: interface2_status_output
+
+    - name: Show interface2 Statistics
+      debug:
+        var: interface2_statistics_output    
+
+    - name: FINAL_DATA_EXPORT
+      debug:
+        msg:
+          int1_status: "{{ interface1_status_output }}"
+          int1_statistics: "{{ interface1_statistics_output }}"    
+          int2_status: "{{ interface2_status_output }}"
+          int2_statistics: "{{ interface2_statistics_output }}"    
+          
