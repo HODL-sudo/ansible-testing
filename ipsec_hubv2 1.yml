@@ -37,4 +37,5 @@
 
     - name: Print raw output
       debug:
-        msg: "{{ ipsec_output.stdout }}"
+        #msg: "{{ ipsec_output.stdout }}"
+        msg: "{{ ipsec_output.stdout | replace('\n', ' ') }}"
